@@ -28,6 +28,12 @@
     #endif
 #endif
 
+#define LITTLE_TO_BIG_ENDIAN(value) \
+    ((value >> 24) | \
+    ((value << 8) & 0x00FF0000) | \
+    ((value >> 8) & 0x0000FF00) | \
+    (value << 24))
+
 #if defined(_WIN32)
     #define WIN32_LEAN_AND_MEAN
     #ifndef NOMINMAX
@@ -118,6 +124,9 @@ struct llama_file {
     std::uint32_t read_u32() {
         std::uint32_t ret;
         read_raw(&ret, sizeof(ret));
+#if BIG_ENDIAN
+		ret = LITTLE_TO_BIG_ENDIAN(ret);
+#endif
         return ret;
     }
 

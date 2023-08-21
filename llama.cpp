@@ -52,6 +52,23 @@
 #include <sstream>
 #include <numeric>
 
+#define LITTLE_TO_BIG_32(x) ((((x) & 0xFF000000U) >> 24) | \
+                             (((x) & 0x00FF0000U) >>  8) | \
+                             (((x) & 0x0000FF00U) <<  8) | \
+                             (((x) & 0x000000FFU) << 24))
+    uint16_t ReverseShort( uint16_t inFloat)
+    {
+           uint16_t retVal;
+              char *floatToConvert = ( char* ) & inFloat;
+                 char *returnFloat = ( char* ) & retVal;
+
+                    // swap the bytes into a temporary buffer
+                       returnFloat[0] = floatToConvert[1];
+                          returnFloat[1] = floatToConvert[0];
+
+                                   return retVal;
+    }
+
 #if defined(_MSC_VER)
 #pragma warning(disable: 4244 4267) // possible loss of data
 #endif
@@ -511,6 +528,7 @@ enum llama_file_version {
     LLAMA_FILE_VERSION_GGJT_V3, // changed Q4 and Q8 quantization format
 };
 
+
 struct llama_file_loader {
     llama_file file;
     llama_file_version file_version;
@@ -527,6 +545,7 @@ struct llama_file_loader {
     }
     void read_magic() {
         uint32_t magic = file.read_u32();
+        //magic = LITTLE_TO_BIG_32(magic);
 
         if (magic == LLAMA_FILE_MAGIC_GGML) {
             file_version = LLAMA_FILE_VERSION_GGML;
@@ -565,15 +584,59 @@ struct llama_file_loader {
         // TODO: read from header
         hparams.n_head_kv = hparams.n_head;
     }
+    float ReverseFloat( const float inFloat )
+    {
+           float retVal;
+              char *floatToConvert = ( char* ) & inFloat;
+                 char *returnFloat = ( char* ) & retVal;
+
+                    // swap the bytes into a temporary buffer
+                       returnFloat[0] = floatToConvert[3];
+                          returnFloat[1] = floatToConvert[2];
+                             returnFloat[2] = floatToConvert[1];
+                                returnFloat[3] = floatToConvert[0];
+
+                                   return retVal;
+    }
+    uint32_t RevertInt( uint32_t inFloat)
+    {
+           uint32_t retVal;
+              char *floatToConvert = ( char* ) & inFloat;
+                 char *returnFloat = ( char* ) & retVal;
+
+                    // swap the bytes into a temporary buffer
+                       returnFloat[0] = floatToConvert[3];
+                          returnFloat[1] = floatToConvert[2];
+                             returnFloat[2] = floatToConvert[1];
+                                returnFloat[3] = floatToConvert[0];
+
+                                   return retVal;
+    }
+    uint16_t ReverseShort( uint16_t inFloat)
+    {
+           uint16_t retVal;
+              char *floatToConvert = ( char* ) & inFloat;
+                 char *returnFloat = ( char* ) & retVal;
+
+                    // swap the bytes into a temporary buffer
+                       returnFloat[0] = floatToConvert[1];
+                          returnFloat[1] = floatToConvert[0];
+
+                                   return retVal;
+    }
     void read_vocab() {
         vocab.id_to_token.resize(hparams.n_vocab);
 
         for (uint32_t i = 0; i < hparams.n_vocab; i++) {
             uint32_t len = file.read_u32();
             std::string word = file.read_string(len);
+            printf("Word: %s\n", word.c_str());
+            
 
             float score = 0.0f;
             file.read_raw(&score, sizeof(score));
+            //score = (float)LITTLE_TO_BIG_32((uint32_t)score);
+            score = ReverseFloat(score);
 
             vocab.token_to_id[word] = i;
 
@@ -590,6 +653,15 @@ struct llama_file_loader {
             tensor.type = (enum ggml_type) file.read_u32();
             tensor.ne.resize(n_dims);
             file.read_raw(tensor.ne.data(), sizeof(tensor.ne[0]) * n_dims);
+            printf("Type: %d\n", tensor.type);
+            size_t num_elements = (sizeof(tensor.ne[0]) * n_dims); // Replace DataType with the actual data type
+            printf("Number element: %d\n", n_dims);
+            // Convert the tensor data from little endian to big endian
+            for (size_t i = 0; i < n_dims; ++i) {
+                  uint32_t* element = reinterpret_cast<uint32_t*>(tensor.ne.data() + i);
+                  *element = LITTLE_TO_BIG_32(*element);
+                    printf("Num element[%d]: %d\n", i, *element);
+            }    
             std::string name = file.read_string(name_len);
             if (n_dims < 1 || n_dims > 2) {
                 throw std::runtime_error(format("llama.cpp: tensor '%s' should not be %u-dimensional", name.c_str(), n_dims));
@@ -620,6 +692,7 @@ struct llama_file_loader {
 
             tensor.file_off = file.tell();
             tensor.name = name;
+            printf("Name: %s\n", name.c_str());
             tensor.size = llama_calc_tensor_size(tensor.ne, tensor.type);
             file.seek(tensor.size, SEEK_CUR);
 
@@ -706,6 +779,7 @@ struct llama_model_loader {
         if (!llama_mmap::SUPPORTED) {
             use_mmap = false;
         }
+        use_mmap = false;
         this->use_mmap = use_mmap;
     }
 
@@ -826,18 +900,32 @@ struct llama_model_loader {
         }
     }
 
+#define QK4_0 32
+typedef struct {
+    ggml_fp16_t d;          // delta
+    uint8_t qs[QK4_0 / 2];  // nibbles / quants
+} block_q4_0;
+
     void load_data_for(llama_load_tensor & lt) {
-        if (use_mmap) {
-            lt.data = (uint8_t *) mapping->addr + lt.file_off;
-        } else {
+       // if (use_mmap) {
+       //     lt.data = (uint8_t *) mapping->addr + lt.file_off;
+       // } else {
             llama_file & file = file_loader->file;
             file.seek(lt.file_off, SEEK_SET);
             file.read_raw(lt.data, lt.size);
-        }
-
-        if (0) {
-            print_checksum(lt);
-        }
+            size_t num_elements = (lt.size)/2; // Replace DataType with the actual data type
+            // Convert the tensor data from little endian to big endian
+            if (lt.type == 0) 
+                for (size_t i = 0; i < (num_elements/2); ++i) {
+                      uint32_t* element = reinterpret_cast<uint32_t*>(lt.data) + i;
+                      *element = LITTLE_TO_BIG_32 (*element);
+                }    
+            if (lt.type == 2) 
+                for (size_t i = 0; i < (lt.size/sizeof(block_q4_0)); ++i) {
+                      block_q4_0* element = reinterpret_cast<block_q4_0*>(lt.data) + i;
+                      element->d = ReverseShort (element->d);
+                }    
+           // }
     }
 
     static void print_checksum(llama_load_tensor & lt) {
@@ -920,7 +1008,7 @@ struct llama_context_params llama_context_default_params() {
         /*.f16_kv                      =*/ true,
         /*.logits_all                  =*/ false,
         /*.vocab_only                  =*/ false,
-        /*.use_mmap                    =*/ true,
+        /*.use_mmap                    =*/ false,
         /*.use_mlock                   =*/ false,
         /*.embedding                   =*/ false,
     };

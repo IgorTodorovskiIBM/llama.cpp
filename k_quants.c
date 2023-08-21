@@ -26,7 +26,7 @@
 #if defined(_MSC_VER) || defined(__MINGW32__)
 #include <intrin.h>
 #else
-#if !defined(__riscv)
+#if !defined(__riscv) && !defined(__s390x__)
 #include <immintrin.h>
 #endif
 #endif
